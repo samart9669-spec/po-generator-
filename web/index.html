@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PO Generator</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+:root{--ink:#172033;--muted:#697386;--line:#e5e7eb;--bg:#f6f7fb;--card:#fff;--accent:#1f5eff;--ok:#0f8a55;--bad:#c62828}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--ink)}
+.wrap{max-width:980px;margin:40px auto;padding:0 20px}.hero{margin-bottom:22px}.hero h1{font-size:32px;margin:0 0 6px}.hero p{margin:0;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 5px 18px rgba(23,32,51,.05);margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.field label{display:block;font-weight:700;margin-bottom:7px}.field input,.field select{width:100%;padding:12px;border:1px solid #d7dbe3;border-radius:10px;background:#fff;font-size:15px}
+.models{display:flex;gap:18px;flex-wrap:wrap}.models label{font-weight:600}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer}.primary{background:var(--accent);color:#fff}.secondary{background:#eef2ff;color:#2042a5}.ghost{background:#f3f4f6;color:#374151}.btn:disabled{opacity:.45;cursor:not-allowed}
+.status{border-radius:10px;padding:12px 14px;background:#f3f4f6;color:#374151}.status.ok{background:#edf9f3;color:var(--ok)}.status.bad{background:#fff1f1;color:var(--bad)}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}.metric{background:#f8fafc;border-radius:12px;padding:14px}.metric small{display:block;color:var(--muted)}.metric strong{font-size:21px}
+table{width:100%;border-collapse:collapse;margin-top:16px;font-size:14px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}th{background:#f8fafc}.right{text-align:right}.privacy{font-size:13px;color:var(--muted);line-height:1.5;margin-top:10px}
+@media(max-width:700px){.grid,.summary{grid-template-columns:1fr 1fr}.wrap{margin:20px auto}.hero h1{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero"><h1>PO Generator</h1><p>สร้าง PO จากไฟล์แผนสินค้าและ PO Template โดยไม่ต้อง Copy/Paste</p></div>
+
+  <div class="card">
+    <div class="grid">
+      <div class="field"><label>1. ไฟล์แผนสั่งผลิต (.xlsx)</label><input id="plan" type="file" accept=".xlsx,.xlsm" /></div>
+      <div class="field"><label>2. PO Template (.xlsx)</label><input id="template" type="file" accept=".xlsx,.xlsm" /></div>
+      <div class="field"><label>เดือนที่จะสร้าง</label><select id="month"><option value="ALL">ทุกเดือน</option><option value="M9">M9</option><option value="M10">M10</option><option value="M11">M11</option></select></div>
+      <div class="field"><label>วันที่ PO</label><input id="podate" type="date" /></div>
+    </div>
+    <div style="margin-top:16px"><label style="font-weight:700;display:block;margin-bottom:8px">รุ่น</label>
+      <div class="models">
+        <label><input type="checkbox" class="model" value="AiR" checked> AiR</label>
+        <label><input type="checkbox" class="model" value="Freedom" checked> Freedom</label>
+        <label><input type="checkbox" class="model" value="Kids" checked> Kids</label>
+      </div>
+    </div>
+    <div class="actions"><button id="run" class="btn primary" disabled>Generate PO</button><button id="clear" class="btn ghost">Clear</button></div>
+    <div class="privacy">ไฟล์ Excel จะถูกประมวลผลในเบราว์เซอร์ของเครื่องผู้ใช้โดยตรง ไม่มีการอัปโหลดขึ้นเซิร์ฟเวอร์ของแอป</div>
+  </div>
+
+  <div class="card">
+    <div id="status" class="status">เลือกไฟล์ทั้ง 2 ตัวเพื่อเริ่ม</div>
+    <div id="result" style="display:none"><div class="summary" id="metrics"></div><div id="tableWrap"></div><div class="actions"><button id="download" class="btn primary">Download PO Excel</button><button id="print" class="btn secondary">Print / Save PDF</button></div></div>
+  </div>
+</div>
+<script>
+const MODEL={
+ AiR:{sheet:'09_📦 AiR แผนผลิต',start:32,end:167,months:{M9:'Air seamless M9',M10:'Air seamless M10',M11:'Air seamless M11'}},
+ Freedom:{sheet:'12_📦 Freedom แผนผลิต',start:32,end:124,months:{M9:'FreeDom M9',M10:'FreeDom M10',M11:'FreeDom M11'}},
+ Kids:{sheet:'15_📦 Kids แผนผลิต',start:25,end:44,months:{M11:'Kid seamless M9'}}
+};
+const MCOL={M9:'M',M10:'N',M11:'O'}; const PACK={Pack1:1,Pack3:3,Pack5:5,Doz:12};
+function addr(c,r){return c+r} function norm(v){return String(v??'').replace(/\s+/g,' ').trim().toLowerCase()}
+function v(ws,c,r){const x=ws[addr(c,r)]; return x?x.v:null}
+function pack(s){s=String(s||''); if(s.startsWith('M5R-'))return 'Pack5'; if(s.startsWith('B3R-'))return 'Pack3'; if(s.startsWith('FTR-'))return 'Doz'; return 'Pack1'}
+function base(s){return String(s||'').split('-').slice(0,4).join('-')}
+function detail(s){const p=String(s||'').split('-'); const colors={BL:'Black',NB:'Navy Blue',GR:'Grey',WH:'White',BI:'Blue indigo',DG:'Dk.Grey',MX:'Mix'};return {size:p.at(-2)||'',color:colors[p.at(-1)]||p.at(-1)||''}}
+function deep(x){return JSON.parse(JSON.stringify(x))}
+function dateText(s){if(!s)return ''; const d=new Date(s+'T00:00:00'); return 'Date : '+d.toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}
+function setc(ws,c,r,val,styleFrom){const key=addr(c,r); const old=styleFrom&&styleFrom[key]; const cell={v:val,t:typeof val==='number'?'n':'s'}; if(old&&old.s!==undefined)cell.s=old.s; if(old&&old.z)cell.z=old.z; ws[key]=cell}
+function clearRow(ws,r){for(const c of ['B','C','D','E','F','G','H','I','J','K'])setc(ws,c,r,'')}
+function findItemEnd(ws){let r=16; while(v(ws,'C',r)!=null && String(v(ws,'C',r)).includes('-'))r++; return r-1}
+function findTotalRow(ws,itemEnd){for(let r=itemEnd+1;r<=ws['!ref']?XLSX.utils.decode_range(ws['!ref']).e.r+1:200;r++){const h=v(ws,'H',r); const k=v(ws,'K',r); if(typeof h==='string'&&h.toUpperCase().includes('SUM'))return r; if(typeof k==='string'&&k.toUpperCase().includes('SUM'))return r} return itemEnd+1}
+function templateMaster(wb){const m={}; const sheetNames=wb.SheetNames.filter(s=>/^Air seamless|^FreeDom|^Kid seamless/.test(s)); for(const sn of sheetNames){const ws=wb.Sheets[sn]; const end=Math.min(150,XLSX.utils.decode_range(ws['!ref']).e.r+1); for(let r=16;r<=end;r++){const s=v(ws,'C',r); if(typeof s!=='string'||s.split('-').length<4)continue; const b=base(s); if(!m[b])m[b]={description:v(ws,'D',r)||'',pack:v(ws,'E',r)||pack(s),price:typeof v(ws,'J',r)==='number'?v(ws,'J',r):null,currency:/^Kid/.test(sn)?'USD':'CNY'};}} return m}
+function makeLines(planWb,templateWb,model,month,master){const cfg=MODEL[model]; const ws=planWb.Sheets[cfg.sheet]; if(!ws)throw Error('ไม่พบชีต '+cfg.sheet); const groups=new Map(); const col=MCOL[month]; for(let r=cfg.start;r<=cfg.end;r++){const sku=v(ws,'E',r),qty=v(ws,col,r); if(typeof sku!=='string'||!sku.includes('-')||typeof qty!=='number'||qty<=0)continue; const p=pack(sku); const key=p==='Pack1'?sku:sku.slice(0,sku.lastIndexOf('-')); const g=key+'|'+p; groups.set(g,(groups.get(g)||0)+qty)} const out=[]; for(const [g,qty0] of groups){const [key,p]=g.split('|'); const bk=base(key); const t=master[bk]; if(!t)throw Error('ไม่พบ mapping ใน PO Template: '+key); const d=p==='Pack1'?detail(key):{size:key.split('-').at(-1)||'',color:'Mix'}; const qty=Math.round(qty0), packs=qty/PACK[p]; out.push({sku:key,description:t.description,pack:p,size:d.size,color:d.color,qty,packs,price:t.price,currency:t.currency,amount:t.price==null?null:packs*t.price})} return out}
+function cloneSheetTemplate(ws){const c=deep(ws); delete c['!protect']; return c}
+function fillGeneratedSheet(ws,lines,dateStr){const style=ws; const originalEnd=findItemEnd(ws); const totalRow=findTotalRow(ws,originalEnd); const cap=Math.max(0,totalRow-16); if(lines.length>cap)throw Error('จำนวนบรรทัด PO เกินพื้นที่ของ Template '+cap+' บรรทัด กรุณาขยาย Template'); for(let r=16;r<=Math.max(originalEnd,totalRow-1);r++)clearRow(ws,r); if(dateStr)setc(ws,'K',8,dateText(dateStr),style); lines.forEach((x,i)=>{const r=16+i; setc(ws,'B',r,i+1,style);setc(ws,'C',r,x.sku,style);setc(ws,'D',r,x.description,style);setc(ws,'E',r,x.pack,style);setc(ws,'F',r,x.size,style);setc(ws,'G',r,x.color,style);setc(ws,'H',r,x.qty,style);setc(ws,'I',r,x.packs||'',style);setc(ws,'J',r,x.price??'',style);setc(ws,'K',r,x.amount??'',style)}); const tr=16+lines.length; setc(ws,'H',tr,'Total',style); setc(ws,'I',tr,lines.reduce((a,x)=>a+x.qty,0),style); setc(ws,'K',tr,lines.reduce((a,x)=>a+(x.amount||0),0),style); for(let r=tr+1;r<=totalRow;r++)clearRow(ws,r); return {qty:lines.reduce((a,x)=>a+x.qty,0),amount:lines.reduce((a,x)=>a+(x.amount||0),0)} }
+function printReport(groups){const w=window.open('','_blank'); const date=document.getElementById('podate').value; let html=`<html><head><title>PO Report</title><style>body{font-family:Arial;padding:30px}h1{margin-bottom:4px}.po{page-break-after:always}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #ccc;padding:6px;font-size:12px;text-align:left}th{background:#eee}.r{text-align:right}</style></head><body><h1>Purchase Order Summary</h1><div>${dateText(date)}</div>`; for(const g of groups){html+=`<div class="po"><h2>${g.model} ${g.month}</h2><div>Template: ${g.template}</div><table><thead><tr><th>No.</th><th>Style No.</th><th>Description</th><th>Pack</th><th>Size</th><th>Color</th><th>Order/pc</th><th>Order/pack</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>`; g.lines.forEach((x,i)=>{html+=`<tr><td>${i+1}</td><td>${x.sku}</td><td>${x.description}</td><td>${x.pack}</td><td>${x.size}</td><td>${x.color}</td><td class="r">${x.qty.toLocaleString()}</td><td class="r">${x.packs.toLocaleString()}</td><td class="r">${x.price??''}</td><td class="r">${x.amount==null?'':x.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`}); html+=`</tbody></table></div>`} html+='</body></html>'; w.document.write(html);w.document.close();w.focus();setTimeout(()=>w.print(),250)}
+let outWb=null, outGroups=[];
+async function run(){const pf=document.getElementById('plan').files[0],tf=document.getElementById('template').files[0]; const status=document.getElementById('status'); try{status.className='status';status.textContent='กำลังอ่านและสร้าง PO…'; const [pb,tb]=await Promise.all([pf.arrayBuffer(),tf.arrayBuffer()]); const planWb=XLSX.read(pb,{type:'array',cellStyles:true}); const wb=XLSX.read(tb,{type:'array',cellStyles:true}); const master=templateMaster(wb); const selected=[...document.querySelectorAll('.model:checked')].map(x=>x.value); const month=document.getElementById('month').value; const date=document.getElementById('podate').value; outGroups=[]; let totalQty=0,totalAmt=0,poCount=0; const generatedNames=[]; for(const model of selected){const months=month==='ALL'?Object.keys(MODEL[model].months):[month]; for(const mon of months){if(!MODEL[model].months[mon])continue; let lines=makeLines(planWb,wb,model,mon,master); if(!lines.length)continue; lines.sort((a,b)=>a.sku.localeCompare(b.sku)); const source=MODEL[model].months[mon]; if(!wb.SheetNames.includes(source))throw Error('ไม่พบ PO Template sheet: '+source); const ws=cloneSheetTemplate(wb.Sheets[source]); const stats=fillGeneratedSheet(ws,lines,date); const name=('GEN_'+model+'_'+mon).slice(0,31); wb.Sheets[name]=ws; wb.SheetNames.push(name); generatedNames.push(name); outGroups.push({model,month:mon,template:source,lines}); totalQty+=stats.qty; totalAmt+=stats.amount;poCount++; }} outGroups.forEach(g=>{g.lines.forEach(x=>{x.price=x.price==null?null:x.price})}); outWb=wb; document.getElementById('metrics').innerHTML=`<div class="metric"><small>PO</small><strong>${poCount}</strong></div><div class="metric"><small>จำนวนสินค้า</small><strong>${totalQty.toLocaleString()}</strong></div><div class="metric"><small>Amount</small><strong>${totalAmt.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div><div class="metric"><small>สถานะ</small><strong style="color:#0f8a55">READY</strong></div>`; let rows=''; outGroups.forEach(g=>rows+=`<tr><td>${g.model}</td><td>${g.month}</td><td>${g.lines.length}</td><td class="right">${g.lines.reduce((a,x)=>a+x.qty,0).toLocaleString()}</td><td class="right">${g.lines.reduce((a,x)=>a+(x.amount||0),0).toLocaleString(undefined,{maximumFractionDigits:2})}</td></tr>`); document.getElementById('tableWrap').innerHTML=`<table><thead><tr><th>Model</th><th>Month</th><th>Lines</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>`; document.getElementById('result').style.display='block'; status.className='status ok'; status.textContent='สร้าง PO สำเร็จ ตรวจยอดในตารางด้านล่างแล้วดาวน์โหลดได้';}catch(e){console.error(e);status.className='status bad';status.textContent='สร้าง PO ไม่สำเร็จ: '+e.message;document.getElementById('result').style.display='none';outWb=null}}
+function updateRun(){document.getElementById('run').disabled=!(document.getElementById('plan').files.length&&document.getElementById('template').files.length)}
+document.getElementById('plan').onchange=updateRun;document.getElementById('template').onchange=updateRun;document.getElementById('run').onclick=run;document.getElementById('clear').onclick=()=>location.reload(); document.getElementById('download').onclick=()=>{if(outWb)XLSX.writeFile(outWb,'PO_Generated.xlsx',{bookType:'xlsx'})}; document.getElementById('print').onclick=()=>printReport(outGroups); document.getElementById('podate').value=new Date().toISOString().slice(0,10);
+</script>
+</body></html>
