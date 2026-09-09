@@ -1,0 +1,8 @@
+# Real business files — keep local
+INPUT/*.xlsx
+INPUT/*.xlsm
+OUTPUT/*.xlsx
+OUTPUT/*.xlsm
+*.xlsx
+*.xlsm
+.DS_Store
